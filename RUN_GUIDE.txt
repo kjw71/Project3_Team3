@@ -1,0 +1,45 @@
+Project3_Team3 Run Guide
+
+1) macOS (zsh/bash)
+- Open Terminal and move to this folder:
+  cd /path/to/Project3_Team3
+- Create and activate virtual environment:
+  python3 -m venv .venv
+  source .venv/bin/activate
+- Install dependencies (locked first):
+  python -m pip install --upgrade pip
+  python -m pip install -r requirements_lock.txt
+- If lock install fails due platform/package mismatch, use:
+  python -m pip install -r requirements.txt
+- Run simulator:
+  python -m streamlit run simulator/simulator_app.py
+- Stop:
+  Ctrl + C
+
+2) Windows (PowerShell)
+- Open PowerShell and move to this folder:
+  cd C:\path\to\Project3_Team3
+- Create and activate virtual environment:
+  py -3 -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+- Install dependencies (locked first):
+  python -m pip install --upgrade pip
+  python -m pip install -r requirements_lock.txt
+- If lock install fails due platform/package mismatch, use:
+  python -m pip install -r requirements.txt
+- Run simulator:
+  python -m streamlit run simulator/simulator_app.py
+- Stop:
+  Ctrl + C
+
+3) Windows (CMD)
+- Open CMD and move to this folder:
+  cd C:\path\to\Project3_Team3
+- Create and activate virtual environment:
+  py -3 -m venv .venv
+  .\.venv\Scripts\activate.bat
+- Install dependencies and run:
+  python -m pip install --upgrade pip
+  python -m pip install -r requirements_lock.txt
+  (fallback) python -m pip install -r requirements.txt
+  python -m streamlit run simulator/simulator_app.py
