@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# RL outputs (models are large)
+outputs/rl_models/*.zip
+outputs/rl_models/*.pkl
+outputs/rl_results/*.csv
+
+# Keep placeholder files
+!outputs/rl_models/.gitkeep
+!outputs/rl_results/.gitkeep
+
+# TensorBoard logs
+logs/
+
+# Streamlit cache
+.streamlit/
+
+# OS
+.DS_Store
+outputs/tb_logs/
