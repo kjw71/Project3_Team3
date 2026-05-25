@@ -5,16 +5,18 @@ __pycache__/
 .venv/
 venv/
 
-# RL outputs (models are large)
+# RL outputs (models are large; results regenerable)
 outputs/rl_models/*.zip
 outputs/rl_models/*.pkl
+outputs/rl_models/*_summary.json
 outputs/rl_results/*.csv
+outputs/tb_logs/
 
-# Keep placeholder files
+# Keep placeholder files trackable
 !outputs/rl_models/.gitkeep
 !outputs/rl_results/.gitkeep
 
-# TensorBoard logs
+# TensorBoard logs (legacy)
 logs/
 
 # Streamlit cache
@@ -22,5 +24,3 @@ logs/
 
 # OS
 .DS_Store
-outputs/tb_logs/
-outputs/rl_models/*_summary.json

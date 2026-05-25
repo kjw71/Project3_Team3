@@ -7,7 +7,8 @@ deterministic order, so the success rate is reproducible across runs.
 Usage:
     python -m rl.evaluate_ppo
     python -m rl.evaluate_ppo --model outputs/rl_models/ppo_airjet
-    python -m rl.evaluate_ppo --stochastic     # use stochastic policy
+    python -m rl.evaluate_ppo --stochastic                                # stochastic policy
+    python -m rl.evaluate_ppo --output outputs/rl_results/eval_50k.csv    # custom CSV name
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ def evaluate(
     model_path: str | None = None,
     vecnorm_path: str | None = None,
     deterministic: bool = True,
+    output_csv: str | None = None,
 ) -> pd.DataFrame:
     """
     Run evaluation on all unseen seeds, each visited exactly once.
@@ -39,6 +41,7 @@ def evaluate(
     """
     model_path   = model_path   or cfg.model_path
     vecnorm_path = vecnorm_path or cfg.vecnorm_path
+    output_csv   = output_csv   or cfg.results_csv
 
     if not os.path.exists(model_path + ".zip"):
         raise FileNotFoundError(
@@ -131,9 +134,9 @@ def evaluate(
         for otype, grp in df.groupby("object_type"):
             print(f"    {otype:12s}: {grp['success'].mean():.2%}  (n={len(grp)})")
 
-    os.makedirs(os.path.dirname(cfg.results_csv), exist_ok=True)
-    df.to_csv(cfg.results_csv, index=False)
-    print(f"\n  Results saved to: {cfg.results_csv}")
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+    df.to_csv(output_csv, index=False)
+    print(f"\n  Results saved to: {output_csv}")
 
     return df
 
@@ -142,6 +145,8 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate PPO for air-jet sorting")
     parser.add_argument("--model",     type=str, default=None, help="Path to model (without .zip)")
     parser.add_argument("--vecnorm",   type=str, default=None, help="Path to VecNormalize pkl")
+    parser.add_argument("--output",    type=str, default=None,
+                        help="Output CSV path (default: cfg.results_csv)")
     parser.add_argument("--stochastic", action="store_true",   help="Use stochastic policy")
     return parser.parse_args()
 
@@ -152,4 +157,5 @@ if __name__ == "__main__":
         model_path=args.model,
         vecnorm_path=args.vecnorm,
         deterministic=not args.stochastic,
+        output_csv=args.output,
     )
