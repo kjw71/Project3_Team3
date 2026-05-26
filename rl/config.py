@@ -16,6 +16,13 @@ from dataclasses import dataclass
 @dataclass
 class RLConfig:
     # -----------------------------------------------------------------------
+    # RL action mode
+    # -----------------------------------------------------------------------
+    # "baseline": 3-action policy [Umax, t_on_offset, duration]
+    # "elevation": 4-action policy [Umax, t_on_offset, duration, elevation]
+    action_mode: str = "elevation"
+
+    # -----------------------------------------------------------------------
     # Seed ranges
     # -----------------------------------------------------------------------
     train_seed_min: int = 0
@@ -79,6 +86,8 @@ class RLConfig:
     jet_z:             float = 0.18  # m  (near object mid-fall height)
     jet_azimuth_deg:   float = 0.0   # baseline +x in x-y plane
     jet_angle_deg:     float = 0.0   # baseline +x in x-z plane (elevation)
+    elevation_min_deg: float = -10.0
+    elevation_max_deg: float = 20.0
     jet_sigma:         float = 0.05  # m  Gaussian radius
     jet_axial_decay:   float = 0.35  # m  downstream decay length
     jet_noise_std:     float = 0.0   # fractional noise; >0 for robustness
@@ -118,6 +127,7 @@ class RLConfig:
     no_landing_penalty:  float = -1.0
     distance_scale:      float = 0.20  # m — divisor for shortfall→penalty
     energy_penalty_w:    float = 0.02
+    center_bonus_weight: float = 0.2
 
     # -----------------------------------------------------------------------
     # Simulation settings

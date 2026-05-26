@@ -7,6 +7,8 @@ deterministic order, so the success rate is reproducible across runs.
 Usage:
     python -m rl.evaluate_ppo
     python -m rl.evaluate_ppo --model outputs/rl_models/ppo_airjet
+    python -m rl.evaluate_ppo --action-mode baseline
+    python -m rl.evaluate_ppo --action-mode elevation
     python -m rl.evaluate_ppo --stochastic                                # stochastic policy
     python -m rl.evaluate_ppo --output outputs/rl_results/eval_50k.csv    # custom CSV name
 """
@@ -28,12 +30,26 @@ from rl.config import RLConfig, DEFAULT_CONFIG
 from rl.env import AirJetSortingEnv
 
 
+def _copy_config(cfg: RLConfig, **overrides) -> RLConfig:
+    return RLConfig(**{**cfg.__dict__, **overrides})
+
+
+def _action_mode_from_model(model: PPO) -> str:
+    shape = tuple(model.action_space.shape)
+    if shape == (3,):
+        return "baseline"
+    if shape == (4,):
+        return "elevation"
+    raise ValueError(f"Unsupported model action space shape: {shape}")
+
+
 def evaluate(
     cfg: RLConfig = DEFAULT_CONFIG,
     model_path: str | None = None,
     vecnorm_path: str | None = None,
     deterministic: bool = True,
     output_csv: str | None = None,
+    action_mode: str | None = None,
 ) -> pd.DataFrame:
     """
     Run evaluation on all unseen seeds, each visited exactly once.
@@ -52,13 +68,27 @@ def evaluate(
             f"VecNormalize stats not found at {vecnorm_path} — run train_ppo.py first."
         )
 
+    model_probe = PPO.load(model_path)
+    model_action_mode = _action_mode_from_model(model_probe)
+    if action_mode is None:
+        cfg = _copy_config(cfg, action_mode=model_action_mode)
+    else:
+        cfg = _copy_config(cfg, action_mode=action_mode)
+        if action_mode != model_action_mode:
+            raise ValueError(
+                f"Requested action_mode={action_mode!r}, but model action "
+                f"space is {model_probe.action_space.shape} ({model_action_mode!r})."
+            )
+
     eval_seeds = list(range(cfg.eval_seed_min, cfg.eval_seed_max + 1))
+    action_dim = 3 if cfg.action_mode == "baseline" else 4
 
     print("=" * 60)
     print("  PPO Air-Jet Sorting — Evaluation")
     print(f"  model         : {model_path}.zip")
     print(f"  eval seeds    : {cfg.eval_seed_min}–{cfg.eval_seed_max}  "
           f"({len(eval_seeds)} episodes)")
+    print(f"  action_mode   : {cfg.action_mode} ({action_dim}D)")
     print(f"  target x      : [{cfg.target_x_min:.3f}, {cfg.target_x_max:.3f}] m")
     print(f"  deterministic : {deterministic}")
     print("=" * 60)
@@ -95,7 +125,9 @@ def evaluate(
                 "umax": info.get("umax"),
                 "t_on": info.get("t_on"),
                 "duration": info.get("duration"),
+                "elevation_deg": info.get("elevation_deg"),
                 "reward_success": info.get("reward_success"),
+                "reward_center": info.get("reward_center"),
                 "reward_distance": info.get("reward_distance"),
                 "reward_energy": info.get("reward_energy"),
             }
@@ -147,6 +179,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--vecnorm",   type=str, default=None, help="Path to VecNormalize pkl")
     parser.add_argument("--output",    type=str, default=None,
                         help="Output CSV path (default: cfg.results_csv)")
+    parser.add_argument("--action-mode", type=str, default=None,
+                        choices=("baseline", "elevation"),
+                        help="Override action mode; default auto-detects from the model")
     parser.add_argument("--stochastic", action="store_true",   help="Use stochastic policy")
     return parser.parse_args()
 
@@ -158,4 +193,5 @@ if __name__ == "__main__":
         vecnorm_path=args.vecnorm,
         deterministic=not args.stochastic,
         output_csv=args.output,
+        action_mode=args.action_mode,
     )

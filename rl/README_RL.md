@@ -19,6 +19,12 @@ pip install -r requirements.txt
 # Default (200 000 steps)
 python -m rl.train_ppo
 
+# Train the old 3-action baseline policy
+python -m rl.train_ppo --action-mode baseline
+
+# Train the new 4-action elevation policy
+python -m rl.train_ppo --action-mode elevation
+
 # Full training run
 python -m rl.train_ppo --total-timesteps 500000
 ```
@@ -35,12 +41,14 @@ Saved files:
 
 ```bash
 python -m rl.evaluate_ppo
+python -m rl.evaluate_ppo --action-mode baseline
+python -m rl.evaluate_ppo --action-mode elevation
 ```
 
-Each unseen seed in `[1000, 1099]` is evaluated **exactly once** in deterministic order.
+Each unseen seed in `[1000, 1099]` is evaluated **exactly once** in deterministic order. If `--action-mode` is omitted, evaluation auto-detects baseline vs elevation mode from the saved PPO model action space.
 
 Output: `outputs/rl_results/evaluation_results.csv`
-Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, reward_success, reward_distance, reward_energy`
+Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, elevation_deg, reward_success, reward_center, reward_distance, reward_energy`
 
 ---
 
@@ -78,7 +86,7 @@ The agent observes the object's initial state and selects jet parameters **once*
 success = target_x_min <= landing_x <= target_x_max
 ```
 
-Default: `target_x_min = 0.42 m`, `target_x_max = 0.65 m`.
+The target interval remains fixed at `target_x_min = 0.42 m`, `target_x_max = 0.65 m`.
 
 Calibrated from a fixed-action sweep over 200 random shapes so that the task is non-trivial:
 
@@ -115,13 +123,25 @@ So PPO has clear room to improve over the best fixed action.
 
 `VecNormalize` (running mean/std) is applied on top during training.
 
-### Action space (3-dim Box in [-1, 1])
+### Action modes
+
+`RLConfig.action_mode` selects the PPO action space:
+
+| Mode | Action shape | Normalized action |
+|------|--------------|-------------------|
+| `baseline` | `Box(-1, 1, shape=(3,))` | `[Umax, t_on_offset, duration]` |
+| `elevation` | `Box(-1, 1, shape=(4,))` | `[Umax, t_on_offset, duration, elevation_angle]` |
+
+The default mode is `elevation`. Use `--action-mode baseline` to train or evaluate the old 3-action policy. In baseline mode, `Jet3D.angle_deg` stays fixed at `jet_angle_deg = 0.0`, so the jet direction remains +x. In elevation mode, `Jet3D.azimuth_deg` remains fixed at `0.0`, and the fourth action controls elevation from `-10.0` to `20.0` degrees.
+
+### Shared action mapping
 
 | Action | Physical range | Mapping |
 |--------|----------------|---------|
 | `action[0]` → Umax | 10–30 m/s | log-scale |
 | `action[1]` → t_on | nominal ± 0.1 s | linear |
 | `action[2]` → duration | 0.01–0.10 s | log-scale |
+| `action[3]` → elevation | -10–20 deg | linear, elevation mode only |
 
 `t_nominal` is the constant-vx estimate of when the object COM reaches `jet_x`. The agent's `action[1]` is an offset around it.
 
@@ -133,6 +153,13 @@ if not has_landed (or non-finite trajectory):
 
 else:
     success_bonus    = +1.0  if target_x_min <= landing_x <= target_x_max else 0.0
+    if success:
+        target_center = 0.5 * (target_x_min + target_x_max)
+        half_width = 0.5 * (target_x_max - target_x_min)
+        normalized_center_error = abs(landing_x - target_center) / max(half_width, eps)
+        center_bonus = center_bonus_weight * max(0.0, 1.0 - normalized_center_error)
+    else:
+        center_bonus = 0.0
 
     if landing_x < target_x_min:   distance = target_x_min - landing_x
     elif landing_x > target_x_max: distance = landing_x - target_x_max
@@ -140,8 +167,10 @@ else:
     distance_penalty = -distance / 0.20
 
     energy_penalty   = -0.02 * (umax_norm + duration_norm)
-    reward = success_bonus + distance_penalty + energy_penalty
+    reward = success_bonus + center_bonus + distance_penalty + energy_penalty
 ```
+
+Default `center_bonus_weight = 0.2`. The center bonus is only paid for landings inside the fixed target interval `[0.42, 0.65]`.
 
 ### Seed splits
 

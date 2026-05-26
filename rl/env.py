@@ -64,9 +64,9 @@ class AirJetSortingEnv(gym.Env):
     """
     One-step Gymnasium environment for +x air-jet sorting with PPO.
 
-    The agent observes the object's initial state, picks (Umax, t_on, duration)
-    once, and the simulator runs the full episode.  Reward is computed from the
-    final landing_x against [target_x_min, target_x_max].
+    The agent observes the object's initial state, picks jet parameters once,
+    and the simulator runs the full episode.  Reward is computed from the final
+    landing_x against [target_x_min, target_x_max].
 
     Args:
         config: hyperparameters / physics ranges.
@@ -85,6 +85,11 @@ class AirJetSortingEnv(gym.Env):
     ):
         super().__init__()
         self.cfg = config
+        if self.cfg.action_mode not in ("baseline", "elevation"):
+            raise ValueError(
+                "action_mode must be 'baseline' or 'elevation', "
+                f"got {self.cfg.action_mode!r}"
+            )
 
         if seed_range is not None:
             self._seed_min, self._seed_max = seed_range
@@ -97,9 +102,12 @@ class AirJetSortingEnv(gym.Env):
         )
         self._fixed_idx: int = 0
 
-        # Action: [umax_norm, t_on_norm, duration_norm] in [-1, 1]
+        # Action in [-1, 1]:
+        #   baseline  -> [umax_norm, t_on_norm, duration_norm]
+        #   elevation -> [umax_norm, t_on_norm, duration_norm, elevation_norm]
+        action_dim = 3 if self.cfg.action_mode == "baseline" else 4
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(3,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(action_dim,), dtype=np.float32
         )
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
@@ -180,7 +188,7 @@ class AirJetSortingEnv(gym.Env):
         self, action: np.ndarray
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.asarray(action, dtype=np.float32)
-        umax, t_on, duration = self._decode_action(action)
+        umax, t_on, duration, elevation_deg = self._decode_action(action)
 
         jet = Jet3D(
             umax=umax,
@@ -190,7 +198,7 @@ class AirJetSortingEnv(gym.Env):
             y_center=self.cfg.jet_y,
             z_center=self.cfg.jet_z,
             azimuth_deg=self.cfg.jet_azimuth_deg,
-            angle_deg=self.cfg.jet_angle_deg,
+            angle_deg=elevation_deg,
             sigma=self.cfg.jet_sigma,
             axial_decay=self.cfg.jet_axial_decay,
             noise_std=self.cfg.jet_noise_std,
@@ -226,6 +234,7 @@ class AirJetSortingEnv(gym.Env):
                 "umax": umax,
                 "t_on": t_on,
                 "duration": duration,
+                "elevation_deg": elevation_deg,
                 "t_nominal": self._t_nominal,
             }
         )
@@ -272,9 +281,16 @@ class AirJetSortingEnv(gym.Env):
             )
         raise ValueError(f"Unknown object type: {obj_type}")
 
-    def _decode_action(self, action: np.ndarray) -> Tuple[float, float, float]:
-        """Map action in [-1, 1]^3 to physical (umax, t_on, duration)."""
+    def _decode_action(self, action: np.ndarray) -> Tuple[float, float, float, float]:
+        """Map normalized action to physical jet parameters."""
         cfg = self.cfg
+        action = np.asarray(action, dtype=np.float32).reshape(-1)
+        if action.size < self.action_space.shape[0]:
+            raise ValueError(
+                f"Expected action with {self.action_space.shape[0]} values, "
+                f"got {action.size}"
+            )
+
         a0 = float(np.clip(action[0], -1.0, 1.0))
         umax = cfg.umax_min * (cfg.umax_max / cfg.umax_min) ** ((a0 + 1.0) / 2.0)
 
@@ -284,7 +300,15 @@ class AirJetSortingEnv(gym.Env):
         a2 = float(np.clip(action[2], -1.0, 1.0))
         duration = cfg.duration_min * (cfg.duration_max / cfg.duration_min) ** ((a2 + 1.0) / 2.0)
 
-        return float(umax), float(t_on), float(duration)
+        if cfg.action_mode == "elevation":
+            a3 = float(np.clip(action[3], -1.0, 1.0))
+            elevation = cfg.elevation_min_deg + 0.5 * (a3 + 1.0) * (
+                cfg.elevation_max_deg - cfg.elevation_min_deg
+            )
+        else:
+            elevation = cfg.jet_angle_deg
+
+        return float(umax), float(t_on), float(duration), float(elevation)
 
     def _build_obs(self) -> np.ndarray:
         obj = self._obj
@@ -335,6 +359,7 @@ class AirJetSortingEnv(gym.Env):
                 "landing_y": None,
                 "landing_z": None,
                 "reward_success": 0.0,
+                "reward_center": 0.0,
                 "reward_distance": 0.0,
                 "reward_energy": 0.0,
             }
@@ -345,6 +370,15 @@ class AirJetSortingEnv(gym.Env):
         # Success: landing_x inside the target x-interval
         success = (cfg.target_x_min <= lx <= cfg.target_x_max)
         r_success = cfg.success_bonus if success else 0.0
+
+        # Center-seeking bonus only within the fixed success interval
+        if success:
+            target_center = 0.5 * (cfg.target_x_min + cfg.target_x_max)
+            half_width = 0.5 * (cfg.target_x_max - cfg.target_x_min)
+            center_error = abs(lx - target_center) / max(half_width, 1e-12)
+            r_center = cfg.center_bonus_weight * max(0.0, 1.0 - center_error)
+        else:
+            r_center = 0.0
 
         # Distance to the target interval (0 if inside)
         if lx < cfg.target_x_min:
@@ -360,7 +394,7 @@ class AirJetSortingEnv(gym.Env):
         duration_norm = (duration - cfg.duration_min) / (cfg.duration_max - cfg.duration_min)
         r_energy = -cfg.energy_penalty_w * (umax_norm + duration_norm)
 
-        reward = r_success + r_distance + r_energy
+        reward = r_success + r_center + r_distance + r_energy
 
         info = {
             "success": success,
@@ -369,6 +403,7 @@ class AirJetSortingEnv(gym.Env):
             "landing_y": ly,
             "landing_z": lz,
             "reward_success": r_success,
+            "reward_center": r_center,
             "reward_distance": r_distance,
             "reward_energy": r_energy,
         }
@@ -384,6 +419,8 @@ if __name__ == "__main__":
     env = AirJetSortingEnv()
     obs, info = env.reset(seed=0)
     print(f"obs shape : {obs.shape}")
+    print(f"action mode: {env.cfg.action_mode}")
+    print(f"action shape: {env.action_space.shape}")
     print(f"reset info: {info}")
     print(f"target    : [{env.cfg.target_x_min}, {env.cfg.target_x_max}] m\n")
 
@@ -398,6 +435,7 @@ if __name__ == "__main__":
         print(
             f"ep {i:2d} | obj={str(info['object_type']):<9s} | "
             f"landed={str(info['has_landed']):<5s} | lx={lx_str} | "
+            f"elev={info['elevation_deg']:+.1f} deg | "
             f"success={str(info['success']):<5s} | reward={reward:+.3f}"
         )
         obs, info = env.reset()

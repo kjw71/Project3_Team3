@@ -16,6 +16,8 @@ Results land in:
 Usage:
     python -m rl.baselines
     python -m rl.baselines --only random
+    python -m rl.baselines --action-mode baseline
+    python -m rl.baselines --action-mode elevation
     python -m rl.baselines --random-seed 123
 """
 
@@ -35,14 +37,19 @@ from rl.config import RLConfig, DEFAULT_CONFIG
 from rl.env import AirJetSortingEnv
 
 
-# Normalized actions live in [-1, 1]^3 = (umax_norm, t_on_offset_norm, duration_norm)
+# Baseline normalized actions in [-1, 1]^3:
+# (umax_norm, t_on_offset_norm, duration_norm)
 FIXED_BEST_ACTION = np.array([1.0, 0.0, 1.0], dtype=np.float32)
 WEAK_ACTION       = np.array([-1.0, 0.0, -1.0], dtype=np.float32)
 
 
+def _copy_config(cfg: RLConfig, **overrides) -> RLConfig:
+    return RLConfig(**{**cfg.__dict__, **overrides})
+
+
 def _run_baseline(
     name: str,
-    action_fn: Callable[[np.random.Generator, int], np.ndarray],
+    action_fn: Callable[[np.random.Generator, int, RLConfig], np.ndarray],
     cfg: RLConfig,
     out_csv: str,
     random_seed: int,
@@ -59,6 +66,7 @@ def _run_baseline(
     print(f"  Baseline: {name}")
     print(f"  eval seeds : {cfg.eval_seed_min}–{cfg.eval_seed_max} "
           f"({len(eval_seeds)} episodes)")
+    print(f"  action mode: {cfg.action_mode} ({env.action_space.shape[0]}D)")
     print(f"  target x   : [{cfg.target_x_min:.3f}, {cfg.target_x_max:.3f}] m")
     print(f"  rng seed   : {random_seed}")
     print("=" * 60)
@@ -66,7 +74,7 @@ def _run_baseline(
     records: List[Dict] = []
     for ep in range(len(eval_seeds)):
         obs, reset_info = env.reset()
-        action = action_fn(rng, ep)
+        action = action_fn(rng, ep, cfg)
         obs, reward, terminated, truncated, info = env.step(action)
 
         records.append(
@@ -83,7 +91,9 @@ def _run_baseline(
                 "umax":            info.get("umax"),
                 "t_on":            info.get("t_on"),
                 "duration":        info.get("duration"),
+                "elevation_deg":   info.get("elevation_deg"),
                 "reward_success":  info.get("reward_success"),
+                "reward_center":   info.get("reward_center"),
                 "reward_distance": info.get("reward_distance"),
                 "reward_energy":   info.get("reward_energy"),
             }
@@ -126,18 +136,35 @@ def _run_baseline(
 
 # -- Action functions --------------------------------------------------------
 
-def _random_action(rng: np.random.Generator, _ep: int) -> np.ndarray:
+def _zero_elevation_norm(cfg: RLConfig) -> float:
+    span = max(cfg.elevation_max_deg - cfg.elevation_min_deg, 1e-12)
+    value = 2.0 * (cfg.jet_angle_deg - cfg.elevation_min_deg) / span - 1.0
+    return float(np.clip(value, -1.0, 1.0))
+
+
+def _with_mode(base_action: np.ndarray, cfg: RLConfig) -> np.ndarray:
+    if cfg.action_mode == "baseline":
+        return base_action.copy()
+    return np.concatenate(
+        [base_action, np.array([_zero_elevation_norm(cfg)], dtype=np.float32)]
+    ).astype(np.float32)
+
+
+def _random_action(rng: np.random.Generator, _ep: int, cfg: RLConfig) -> np.ndarray:
     # Uniform over the normalized action space; the env maps it to physical
-    # (umax, t_on, duration) the same way it would for the policy.
-    return rng.uniform(-1.0, 1.0, size=3).astype(np.float32)
+    # jet parameters the same way it would for the policy.
+    action_dim = 3 if cfg.action_mode == "baseline" else 4
+    return rng.uniform(-1.0, 1.0, size=action_dim).astype(np.float32)
 
 
-def _fixed_best_action(_rng: np.random.Generator, _ep: int) -> np.ndarray:
-    return FIXED_BEST_ACTION.copy()
+def _fixed_best_action(
+    _rng: np.random.Generator, _ep: int, cfg: RLConfig
+) -> np.ndarray:
+    return _with_mode(FIXED_BEST_ACTION, cfg)
 
 
-def _weak_action(_rng: np.random.Generator, _ep: int) -> np.ndarray:
-    return WEAK_ACTION.copy()
+def _weak_action(_rng: np.random.Generator, _ep: int, cfg: RLConfig) -> np.ndarray:
+    return _with_mode(WEAK_ACTION, cfg)
 
 
 # -- Entry point -------------------------------------------------------------
@@ -164,12 +191,21 @@ def _parse_args() -> argparse.Namespace:
         default=0,
         help="RNG seed for the random-action baseline (reproducibility).",
     )
+    parser.add_argument(
+        "--action-mode",
+        type=str,
+        default=None,
+        choices=("baseline", "elevation"),
+        help="Override action mode (default: from config).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
     cfg = DEFAULT_CONFIG
+    if args.action_mode is not None:
+        cfg = _copy_config(cfg, action_mode=args.action_mode)
 
     if args.only is not None:
         out_csv, action_fn = BASELINES[args.only]
