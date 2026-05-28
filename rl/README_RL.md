@@ -150,7 +150,7 @@ Objects travel only in the **+x** (conveyor/sorting) direction at the start of e
 | `baseline` | `Box(-1, 1, shape=(3,))` | `[Umax, t_on_offset, duration]` |
 | `elevation` | `Box(-1, 1, shape=(4,))` | `[Umax, t_on_offset, duration, elevation_angle]` |
 
-The default mode is `elevation`. Use `--action-mode baseline` to train or evaluate the old 3-action policy. In baseline mode, `Jet3D.angle_deg` stays fixed at `jet_angle_deg = 0.0`, so the jet direction remains +x. In elevation mode, `Jet3D.azimuth_deg` remains fixed at `0.0`, and the fourth action controls elevation from `-10.0` to `20.0` degrees.
+The default mode is `elevation`. Use `--action-mode baseline` to train or evaluate the old 3-action policy. In baseline mode, `Jet3D.angle_deg` stays fixed at `jet_angle_deg = 0.0`, so the jet direction remains +x. In elevation mode, `Jet3D.azimuth_deg` remains fixed at `0.0`, and the fourth action controls elevation from `0.0` to `60.0` degrees. The lower bound is 0° (horizontal +x) since negative elevation is counterproductive for the boundary-crossing task; the upper bound is 60° to give the policy headroom for increasing flight time and crossing `target_x_min = 0.42 m`.
 
 ### Shared action mapping
 
@@ -159,7 +159,7 @@ The default mode is `elevation`. Use `--action-mode baseline` to train or evalua
 | `action[0]` → Umax | 10–30 m/s | log-scale |
 | `action[1]` → t_on | nominal ± 0.1 s | linear |
 | `action[2]` → duration | 0.01–0.10 s | log-scale |
-| `action[3]` → elevation | -10–20 deg | linear, elevation mode only |
+| `action[3]` → elevation | 0–60 deg | linear, elevation mode only (`action[3]=-1`→0°, `0`→30°, `+1`→60°) |
 
 `t_nominal` is the constant-vx estimate of when the object COM reaches `jet_x`. The agent's `action[1]` is an offset around it.
 
