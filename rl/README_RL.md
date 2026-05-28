@@ -48,7 +48,7 @@ python -m rl.evaluate_ppo --action-mode elevation
 Each unseen seed in `[1000, 1099]` is evaluated **exactly once** in deterministic order. If `--action-mode` is omitted, evaluation auto-detects baseline vs elevation mode from the saved PPO model action space.
 
 Output: `outputs/rl_results/evaluation_results.csv`
-Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, elevation_deg, reward_success, reward_center, reward_distance, reward_overshoot, reward_energy, umax_norm, duration_norm`
+Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, elevation_deg, reward_success, reward_undershoot, reward_overshoot, reward_energy, reward_center, reward_distance, umax_norm, duration_norm, target_x_min, overshoot_soft_start, reward_mode`
 
 ---
 
@@ -80,26 +80,32 @@ The agent observes the object's initial state and selects jet parameters **once*
 
 **Note on the project PDF convention.** The final project PDF mentions `y_land > y_c` as the sorting boundary, but this conflicts with the simulator's actual coordinate convention (which sorts in +x). This implementation follows the simulator: success is defined by `landing_x` against an x-interval. The mismatch with the PDF is a notation ambiguity, not a behaviour difference — we just rename "the lateral sorting coordinate" from `y` (PDF) to `x` (simulator).
 
-### Sorting success criterion
+### Sorting success criterion (boundary mode)
 
 ```
-success = target_x_min <= landing_x <= target_x_max
+success = landing_x >= target_x_min   (target_x_min = 0.42 m)
 ```
 
-The target interval remains fixed at `target_x_min = 0.42 m`, `target_x_max = 0.65 m`.
+**Why 0.42 m?** The no-jet evaluation shows:
+- mean no-jet `landing_x` ≈ 0.355 m
+- max  no-jet `landing_x` ≈ 0.411 m
+
+So `target_x_min = 0.42 m` is just beyond the natural ballistic landing range. Any jet effect that pushes the object past this boundary counts as a successful sort.
+
+`target_x_max = 0.65 m` is retained in `config.py` for reference and legacy `interval` mode, but it is **not** a hard failure boundary in boundary mode.
 
 Calibrated from a fixed-action sweep over 200 random shapes so that the task is non-trivial:
 
-| Action | Hit rate on `[0.42, 0.65]` |
-|--------|--------------------------|
+| Action | Boundary success rate (`landing_x >= 0.42`) |
+|--------|--------------------------------------------|
 | no jet (U_min, D_min) | 0% |
 | weak (U=14, D=0.03) | 0% |
 | medium (U=17, D=0.03) | 0% |
-| U_max, D=0.03 | 8% |
-| U_max, D_max (best fixed action) | **36%** |
-| uniform random action | 2% |
+| U_max, D=0.03 | ~8% |
+| U_max, D_max (best fixed action) | ~36% |
+| uniform random action | ~2% |
 
-So PPO has clear room to improve over the best fixed action.
+PPO has clear room to improve over the best fixed action.
 
 ### Landing position convention
 
@@ -123,6 +129,18 @@ So PPO has clear room to improve over the best fixed action.
 
 `VecNormalize` (running mean/std) is applied on top during training.
 
+`target_x_max` remains in the observation for structural compatibility. In boundary mode, `vy = vz = 0` always (see initial velocity section below), so those observation slots are always zero.
+
+### Initial velocity
+
+```
+vx ~ Uniform(0.80, 1.20) m/s    (conveyor speed, randomised)
+vy = 0.0                          (no lateral belt velocity)
+vz = 0.0                          (no vertical initial velocity)
+```
+
+Objects travel only in the **+x** (conveyor/sorting) direction at the start of each episode. The conveyor and the sorting direction are both x, so randomising vy or vz would add physically meaningless noise. Angular velocity remains randomised: `(ωx, ωy, ωz) ~ Uniform(-2, 2) rad/s`.
+
 ### Action modes
 
 `RLConfig.action_mode` selects the PPO action space:
@@ -145,54 +163,52 @@ The default mode is `elevation`. Use `--action-mode baseline` to train or evalua
 
 `t_nominal` is the constant-vx estimate of when the object COM reaches `jet_x`. The agent's `action[1]` is an offset around it.
 
-### Reward function
+### Reward function (boundary mode)
 
 ```
 if not has_landed (or non-finite trajectory):
     reward = -1.0
 
 else:
-    success_bonus = +1.0  if target_x_min <= landing_x <= target_x_max else 0.0
+    # Success: landing_x past the boundary
+    success = landing_x >= target_x_min
+    reward_success = 1.0 if success else 0.0
 
-    if success:
-        target_center = 0.5 * (target_x_min + target_x_max)
-        half_width = 0.5 * (target_x_max - target_x_min)
-        normalized_center_error = abs(landing_x - target_center) / max(half_width, eps)
-        center_bonus = center_bonus_weight * max(0.0, 1.0 - normalized_center_error)
+    # Undershoot penalty: proportional distance below target_x_min
+    if landing_x < target_x_min:
+        reward_undershoot = -(target_x_min - landing_x) / distance_scale
     else:
-        center_bonus = 0.0
+        reward_undershoot = 0.0
 
-    if landing_x < target_x_min:   distance = target_x_min - landing_x
-    elif landing_x > target_x_max: distance = landing_x - target_x_max
-    else:                          distance = 0.0
-    distance_penalty = -distance / distance_scale   # distance_scale = 0.20 m
-
-    if landing_x > target_x_max:
-        overshoot_penalty = -overshoot_penalty_weight * (landing_x - target_x_max) / distance_scale
+    # Soft overshoot penalty: only applies beyond overshoot_soft_start = 0.75 m
+    # (no penalty between target_x_min and overshoot_soft_start)
+    if landing_x > overshoot_soft_start:
+        reward_overshoot = -overshoot_penalty_weight * (landing_x - overshoot_soft_start) / distance_scale
     else:
-        overshoot_penalty = 0.0
+        reward_overshoot = 0.0
 
     umax_norm     = (umax - umax_min) / (umax_max - umax_min)
     duration_norm = (duration - duration_min) / (duration_max - duration_min)
-    energy_penalty = -umax_penalty_weight * umax_norm - duration_penalty_weight * duration_norm
+    reward_energy = -umax_penalty_weight * umax_norm - duration_penalty_weight * duration_norm
 
-    reward = success_bonus + center_bonus + distance_penalty + overshoot_penalty + energy_penalty
+    reward = reward_success + reward_undershoot + reward_overshoot + reward_energy
 ```
 
 **Reward weights (defaults):**
 
 | Weight | Value | Purpose |
 |--------|-------|---------|
-| `center_bonus_weight` | 0.2 | Encourage landing near target centre |
-| `umax_penalty_weight` | 0.10 | Discourage always using maximum jet strength (Umax) |
-| `duration_penalty_weight` | 0.05 | Discourage unnecessarily long jet bursts |
-| `overshoot_penalty_weight` | 0.50 | Extra penalty for landing beyond `target_x_max` |
+| `distance_scale` | 0.20 m | Divisor for undershoot/overshoot distance penalties |
+| `overshoot_soft_start` | 0.75 m | Soft overshoot penalty only applies beyond this |
+| `umax_penalty_weight` | 0.03 | Discourage unnecessarily high jet strength |
+| `duration_penalty_weight` | 0.02 | Discourage unnecessarily long jet bursts |
+| `overshoot_penalty_weight` | 0.50 | Weight for the soft overshoot penalty |
 
-**Why the Umax penalty?** With the old single `energy_penalty_w = 0.02`, the cost of using full jet strength was negligible compared with the `+1.0` success bonus. The policy converged to always outputting `Umax = 30 m/s`, because the small energy saving was not worth the risk of missing the target. The new `umax_penalty_weight = 0.10` is 5× stronger, making the policy prefer lower jet strength when it can still achieve success.
+**No center bonus in boundary mode.** The task is no longer a bounded target-centering problem — any landing past `target_x_min` is a success. The center bonus is disabled (`reward_center = 0.0`) in boundary mode.
 
-**Why the overshoot penalty?** The distance penalty treats undershooting and overshooting symmetrically. But in practice, overshooting (landing beyond `target_x_max`) tends to produce higher `Umax` choices. The additional `overshoot_penalty_weight = 0.50` makes overshooting disproportionately costly, reinforcing the Umax penalty signal and pushing the policy to use the minimum strength needed.
+**Soft overshoot penalty.** The penalty only kicks in when `landing_x > 0.75 m`. The window `[0.42, 0.75]` is penalty-free, so the policy is free to overshoot within reason without extra cost. Extreme overshoots (> 0.75 m) incur a gentle penalty to discourage wasting energy on unnecessarily powerful jets.
 
-The center bonus is only paid for landings inside the fixed target interval `[0.42, 0.65]`.
+**Backward-compatible keys.** `info["reward_distance"]` is an alias for `reward_undershoot`. `info["reward_center"]` is always `0.0` in boundary mode. Existing scripts reading these keys will still work.
 
 ### Seed splits
 

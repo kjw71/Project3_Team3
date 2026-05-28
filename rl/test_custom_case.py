@@ -225,7 +225,8 @@ def _print_summary(args: argparse.Namespace, data: Dict[str, Any]) -> None:
     print(f"model           : {data['model_path']}")
     print(f"vecnormalize    : {data['vecnorm_path']}")
     print(f"action_mode     : {cfg.action_mode}")
-    print(f"target interval : [{cfg.target_x_min:.2f}, {cfg.target_x_max:.2f}]")
+    print(f"reward_mode     : {cfg.reward_mode}")
+    print(f"target_x_min    : {cfg.target_x_min:.2f} m  (boundary threshold)")
     print("=" * 64)
 
     print("\nInput:")
@@ -261,12 +262,16 @@ def _print_summary(args: argparse.Namespace, data: Dict[str, Any]) -> None:
     print(f"  success          : {info.get('success')}")
     print(f"  reward           : {data['reward']:.6f}")
     print(f"  reward_success   : {info.get('reward_success'):.6f}")
-    print(f"  reward_center    : {info.get('reward_center'):.6f}")
-    print(f"  reward_distance  : {info.get('reward_distance'):.6f}")
+    print(f"  reward_undershoot: {info.get('reward_undershoot'):.6f}")
     print(f"  reward_overshoot : {info.get('reward_overshoot'):.6f}")
     print(f"  reward_energy    : {info.get('reward_energy'):.6f}")
+    print(f"  reward_center    : {info.get('reward_center'):.6f}")    # backward compat
+    print(f"  reward_distance  : {info.get('reward_distance'):.6f}")  # backward compat
     print(f"  umax_norm        : {info.get('umax_norm'):.6f}")
     print(f"  duration_norm    : {info.get('duration_norm'):.6f}")
+    print(f"  target_x_min     : {info.get('target_x_min'):.6f} m")
+    print(f"  overshoot_soft_start: {info.get('overshoot_soft_start'):.6f} m")
+    print(f"  reward_mode      : {info.get('reward_mode')}")
 
 
 def _build_record(args: argparse.Namespace, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -310,14 +315,17 @@ def _build_record(args: argparse.Namespace, data: Dict[str, Any]) -> Dict[str, A
         "success": info.get("success"),
         "reward": data["reward"],
         "reward_success": info.get("reward_success"),
-        "reward_center": info.get("reward_center"),
-        "reward_distance": info.get("reward_distance"),
+        "reward_undershoot": info.get("reward_undershoot"),
         "reward_overshoot": info.get("reward_overshoot"),
         "reward_energy": info.get("reward_energy"),
+        "reward_center": info.get("reward_center"),       # backward compat
+        "reward_distance": info.get("reward_distance"),   # backward compat
         "umax_norm": info.get("umax_norm"),
         "duration_norm": info.get("duration_norm"),
-        "target_x_min": cfg.target_x_min,
-        "target_x_max": cfg.target_x_max,
+        "target_x_min": info.get("target_x_min"),
+        "target_x_max": cfg.target_x_max,                # kept for reference
+        "overshoot_soft_start": info.get("overshoot_soft_start"),
+        "reward_mode": info.get("reward_mode"),
     }
 
 

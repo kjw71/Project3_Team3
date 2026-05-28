@@ -6,8 +6,8 @@ Coordinate convention (matches the simulator):
     y  belt-width direction
     z  vertical
 
-Success criterion:
-    target_x_min <= landing_x <= target_x_max
+Success criterion (boundary mode):
+    landing_x >= target_x_min
 
 Landing convention:
     COM position at the first timestep when the lowest surface point reaches
@@ -359,52 +359,50 @@ class AirJetSortingEnv(gym.Env):
                 "landing_y": None,
                 "landing_z": None,
                 "reward_success": 0.0,
-                "reward_center": 0.0,
-                "reward_distance": 0.0,
+                "reward_undershoot": 0.0,
                 "reward_overshoot": 0.0,
                 "reward_energy": 0.0,
+                "reward_center": 0.0,       # backward compat
+                "reward_distance": 0.0,     # backward compat
                 "umax_norm": 0.0,
                 "duration_norm": 0.0,
+                "target_x_min": cfg.target_x_min,
+                "overshoot_soft_start": cfg.overshoot_soft_start,
+                "reward_mode": cfg.reward_mode,
             }
             return cfg.no_landing_penalty, info
 
         lx, ly, lz = float(landing_pos[0]), float(landing_pos[1]), float(landing_pos[2])
 
-        # Success: landing_x inside the target x-interval
-        success = (cfg.target_x_min <= lx <= cfg.target_x_max)
-        r_success = cfg.success_bonus if success else 0.0
+        # Boundary mode: success = landing_x >= target_x_min
+        success = lx >= cfg.target_x_min
+        reward_success = 1.0 if success else 0.0
 
-        # Center-seeking bonus only within the fixed success interval
-        if success:
-            target_center = 0.5 * (cfg.target_x_min + cfg.target_x_max)
-            half_width = 0.5 * (cfg.target_x_max - cfg.target_x_min)
-            center_error = abs(lx - target_center) / max(half_width, 1e-12)
-            r_center = cfg.center_bonus_weight * max(0.0, 1.0 - center_error)
-        else:
-            r_center = 0.0
-
-        # Distance to the target interval (0 if inside)
+        # Undershoot penalty (zero when on or past target_x_min)
         if lx < cfg.target_x_min:
-            distance = cfg.target_x_min - lx
-        elif lx > cfg.target_x_max:
-            distance = lx - cfg.target_x_max
+            reward_undershoot = -(cfg.target_x_min - lx) / cfg.distance_scale
         else:
-            distance = 0.0
-        r_distance = -(distance / cfg.distance_scale)
+            reward_undershoot = 0.0
 
-        # Overshoot penalty: extra cost for landing beyond target_x_max
-        if lx > cfg.target_x_max:
-            overshoot_distance = lx - cfg.target_x_max
-            r_overshoot = -cfg.overshoot_penalty_weight * overshoot_distance / cfg.distance_scale
+        # Soft overshoot penalty (only beyond overshoot_soft_start)
+        if lx > cfg.overshoot_soft_start:
+            reward_overshoot = (
+                -cfg.overshoot_penalty_weight
+                * (lx - cfg.overshoot_soft_start)
+                / cfg.distance_scale
+            )
         else:
-            r_overshoot = 0.0
+            reward_overshoot = 0.0
 
         # Energy penalty: separate Umax and duration terms
-        umax_norm     = (umax - cfg.umax_min) / (cfg.umax_max - cfg.umax_min)
+        umax_norm = (umax - cfg.umax_min) / (cfg.umax_max - cfg.umax_min)
         duration_norm = (duration - cfg.duration_min) / (cfg.duration_max - cfg.duration_min)
-        r_energy = -cfg.umax_penalty_weight * umax_norm - cfg.duration_penalty_weight * duration_norm
+        reward_energy = (
+            -cfg.umax_penalty_weight * umax_norm
+            - cfg.duration_penalty_weight * duration_norm
+        )
 
-        reward = r_success + r_center + r_distance + r_overshoot + r_energy
+        reward = reward_success + reward_undershoot + reward_overshoot + reward_energy
 
         info = {
             "success": success,
@@ -412,13 +410,17 @@ class AirJetSortingEnv(gym.Env):
             "landing_x": lx,
             "landing_y": ly,
             "landing_z": lz,
-            "reward_success": r_success,
-            "reward_center": r_center,
-            "reward_distance": r_distance,
-            "reward_overshoot": r_overshoot,
-            "reward_energy": r_energy,
+            "reward_success": reward_success,
+            "reward_undershoot": reward_undershoot,
+            "reward_overshoot": reward_overshoot,
+            "reward_energy": reward_energy,
+            "reward_center": 0.0,               # boundary mode: no center bonus
+            "reward_distance": reward_undershoot, # backward compat alias
             "umax_norm": umax_norm,
             "duration_norm": duration_norm,
+            "target_x_min": cfg.target_x_min,
+            "overshoot_soft_start": cfg.overshoot_soft_start,
+            "reward_mode": cfg.reward_mode,
         }
         return float(reward), info
 
@@ -435,7 +437,8 @@ if __name__ == "__main__":
     print(f"action mode: {env.cfg.action_mode}")
     print(f"action shape: {env.action_space.shape}")
     print(f"reset info: {info}")
-    print(f"target    : [{env.cfg.target_x_min}, {env.cfg.target_x_max}] m\n")
+    print(f"reward_mode : {env.cfg.reward_mode}")
+    print(f"target_x_min: {env.cfg.target_x_min} m  (boundary threshold)\n")
 
     successes = []
     t0 = time.time()

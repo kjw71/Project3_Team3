@@ -7,7 +7,8 @@ Coordinate convention (matches the simulator):
     z : vertical direction
 
 Baseline jet direction: azimuth_deg=0, angle_deg=0  =>  e_jet = [1, 0, 0]  (+x).
-Success criterion: target_x_min <= landing_x <= target_x_max.
+Success criterion (boundary mode): landing_x >= target_x_min.
+  target_x_min = 0.42 m is just beyond the no-jet max landing range (~0.411 m).
 """
 
 from dataclasses import dataclass
@@ -21,6 +22,13 @@ class RLConfig:
     # "baseline": 3-action policy [Umax, t_on_offset, duration]
     # "elevation": 4-action policy [Umax, t_on_offset, duration, elevation]
     action_mode: str = "elevation"
+
+    # -----------------------------------------------------------------------
+    # Reward mode
+    # -----------------------------------------------------------------------
+    # "boundary": success = landing_x >= target_x_min  (default)
+    # "interval": success = target_x_min <= landing_x <= target_x_max (legacy)
+    reward_mode: str = "boundary"
 
     # -----------------------------------------------------------------------
     # Seed ranges
@@ -102,34 +110,29 @@ class RLConfig:
     t_on_offset:  float = 0.10   # ±s around nominal arrival time
 
     # -----------------------------------------------------------------------
-    # Sorting success criterion (x-interval, matches simulator convention)
+    # Sorting success criterion
     # -----------------------------------------------------------------------
-    # Picked from a fixed-action sweep over 200 random shapes:
+    # Boundary mode (default): success = landing_x >= target_x_min
+    #   target_x_min = 0.42 m is just beyond the no-jet max landing range:
+    #     mean no-jet landing_x ≈ 0.355 m, max ≈ 0.411 m
+    #   so any jet effect that pushes landing_x past 0.42 counts as sorted.
     #
-    #   action                    | hit rate on [0.42, 0.65]
-    #   --------------------------------------------------
-    #   no jet  (U_min, D_min)    |  0%
-    #   weak    (U=14, D=0.03)    |  0%
-    #   medium  (U=17, D=0.03)    |  0%
-    #   U_max, D=0.03             |  8%
-    #   U_max, D_max  (best fixed)|  36%
-    #   random action             |  2%
-    #
-    # Task is non-trivial (no/weak/medium jet never succeed), the best
-    # fixed action solves ~1/3, leaving meaningful room for PPO.
-    target_x_min: float = 0.42   # m
-    target_x_max: float = 0.65   # m
+    # target_x_max = 0.65 m kept for legacy interval mode and documentation.
+    # In boundary mode it is NOT a hard failure boundary.
+    target_x_min: float = 0.42   # m  (boundary mode threshold)
+    target_x_max: float = 0.65   # m  (legacy interval mode upper bound; reference only)
 
     # -----------------------------------------------------------------------
     # Reward shaping
     # -----------------------------------------------------------------------
-    success_bonus:          float = 1.0
-    no_landing_penalty:     float = -1.0
-    distance_scale:         float = 0.20   # m — divisor for shortfall→penalty
-    center_bonus_weight:    float = 0.2
-    umax_penalty_weight:    float = 0.10   # penalise high jet strength
-    duration_penalty_weight: float = 0.05  # penalise long burst
-    overshoot_penalty_weight: float = 0.50 # extra penalty for landing beyond target_x_max
+    success_bonus:           float = 1.0
+    no_landing_penalty:      float = -1.0
+    distance_scale:          float = 0.20   # m — divisor for shortfall/overshoot → penalty
+    center_bonus_weight:     float = 0.2    # used only in legacy interval mode
+    overshoot_soft_start:    float = 0.75   # m — soft overshoot penalty starts here (boundary mode)
+    umax_penalty_weight:     float = 0.03   # penalise high jet strength
+    duration_penalty_weight: float = 0.02   # penalise long burst
+    overshoot_penalty_weight: float = 0.50  # weight for soft overshoot penalty
 
     # -----------------------------------------------------------------------
     # Simulation settings

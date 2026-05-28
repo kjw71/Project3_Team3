@@ -67,7 +67,8 @@ def _run_baseline(
     print(f"  eval seeds : {cfg.eval_seed_min}–{cfg.eval_seed_max} "
           f"({len(eval_seeds)} episodes)")
     print(f"  action mode: {cfg.action_mode} ({env.action_space.shape[0]}D)")
-    print(f"  target x   : [{cfg.target_x_min:.3f}, {cfg.target_x_max:.3f}] m")
+    print(f"  reward_mode: {cfg.reward_mode}")
+    print(f"  target_x_min: {cfg.target_x_min:.3f} m  (boundary threshold)")
     print(f"  rng seed   : {random_seed}")
     print("=" * 60)
 
@@ -92,13 +93,17 @@ def _run_baseline(
                 "t_on":            info.get("t_on"),
                 "duration":        info.get("duration"),
                 "elevation_deg":   info.get("elevation_deg"),
-                "reward_success":   info.get("reward_success"),
-                "reward_center":    info.get("reward_center"),
-                "reward_distance":  info.get("reward_distance"),
-                "reward_overshoot": info.get("reward_overshoot"),
-                "reward_energy":    info.get("reward_energy"),
-                "umax_norm":        info.get("umax_norm"),
-                "duration_norm":    info.get("duration_norm"),
+                "reward_success":      info.get("reward_success"),
+                "reward_undershoot":   info.get("reward_undershoot"),
+                "reward_overshoot":    info.get("reward_overshoot"),
+                "reward_energy":       info.get("reward_energy"),
+                "reward_center":       info.get("reward_center"),       # backward compat
+                "reward_distance":     info.get("reward_distance"),     # backward compat
+                "umax_norm":           info.get("umax_norm"),
+                "duration_norm":       info.get("duration_norm"),
+                "target_x_min":        info.get("target_x_min"),
+                "overshoot_soft_start": info.get("overshoot_soft_start"),
+                "reward_mode":         info.get("reward_mode"),
             }
         )
 
@@ -122,7 +127,7 @@ def _run_baseline(
     print(f"  Unique seeds covered : {len(set(visited))} / {len(eval_seeds)}")
     print(f"  Landing rate         : {landed_rate:.2%}")
     print(f"  Success rate         : {success_rate:.2%}  "
-          f"(landing_x in [{cfg.target_x_min:.3f}, {cfg.target_x_max:.3f}])")
+          f"(landing_x >= {cfg.target_x_min:.3f} m)")
     print(f"  Mean reward          : {mean_reward:.4f}")
     print(f"  Mean landing x       : {mean_lx:.4f} m  (landed only)")
 
