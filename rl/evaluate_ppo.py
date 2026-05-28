@@ -129,7 +129,10 @@ def evaluate(
                 "reward_success": info.get("reward_success"),
                 "reward_center": info.get("reward_center"),
                 "reward_distance": info.get("reward_distance"),
+                "reward_overshoot": info.get("reward_overshoot"),
                 "reward_energy": info.get("reward_energy"),
+                "umax_norm": info.get("umax_norm"),
+                "duration_norm": info.get("duration_norm"),
             }
         )
         # DummyVecEnv auto-resets on done; env.fixed_seeds advances the index.

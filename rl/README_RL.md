@@ -48,7 +48,7 @@ python -m rl.evaluate_ppo --action-mode elevation
 Each unseen seed in `[1000, 1099]` is evaluated **exactly once** in deterministic order. If `--action-mode` is omitted, evaluation auto-detects baseline vs elevation mode from the saved PPO model action space.
 
 Output: `outputs/rl_results/evaluation_results.csv`
-Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, elevation_deg, reward_success, reward_center, reward_distance, reward_energy`
+Columns: `episode, seed, object_type, success, has_landed, landing_x, landing_y, landing_z, reward, umax, t_on, duration, elevation_deg, reward_success, reward_center, reward_distance, reward_overshoot, reward_energy, umax_norm, duration_norm`
 
 ---
 
@@ -152,7 +152,8 @@ if not has_landed (or non-finite trajectory):
     reward = -1.0
 
 else:
-    success_bonus    = +1.0  if target_x_min <= landing_x <= target_x_max else 0.0
+    success_bonus = +1.0  if target_x_min <= landing_x <= target_x_max else 0.0
+
     if success:
         target_center = 0.5 * (target_x_min + target_x_max)
         half_width = 0.5 * (target_x_max - target_x_min)
@@ -164,13 +165,34 @@ else:
     if landing_x < target_x_min:   distance = target_x_min - landing_x
     elif landing_x > target_x_max: distance = landing_x - target_x_max
     else:                          distance = 0.0
-    distance_penalty = -distance / 0.20
+    distance_penalty = -distance / distance_scale   # distance_scale = 0.20 m
 
-    energy_penalty   = -0.02 * (umax_norm + duration_norm)
-    reward = success_bonus + center_bonus + distance_penalty + energy_penalty
+    if landing_x > target_x_max:
+        overshoot_penalty = -overshoot_penalty_weight * (landing_x - target_x_max) / distance_scale
+    else:
+        overshoot_penalty = 0.0
+
+    umax_norm     = (umax - umax_min) / (umax_max - umax_min)
+    duration_norm = (duration - duration_min) / (duration_max - duration_min)
+    energy_penalty = -umax_penalty_weight * umax_norm - duration_penalty_weight * duration_norm
+
+    reward = success_bonus + center_bonus + distance_penalty + overshoot_penalty + energy_penalty
 ```
 
-Default `center_bonus_weight = 0.2`. The center bonus is only paid for landings inside the fixed target interval `[0.42, 0.65]`.
+**Reward weights (defaults):**
+
+| Weight | Value | Purpose |
+|--------|-------|---------|
+| `center_bonus_weight` | 0.2 | Encourage landing near target centre |
+| `umax_penalty_weight` | 0.10 | Discourage always using maximum jet strength (Umax) |
+| `duration_penalty_weight` | 0.05 | Discourage unnecessarily long jet bursts |
+| `overshoot_penalty_weight` | 0.50 | Extra penalty for landing beyond `target_x_max` |
+
+**Why the Umax penalty?** With the old single `energy_penalty_w = 0.02`, the cost of using full jet strength was negligible compared with the `+1.0` success bonus. The policy converged to always outputting `Umax = 30 m/s`, because the small energy saving was not worth the risk of missing the target. The new `umax_penalty_weight = 0.10` is 5× stronger, making the policy prefer lower jet strength when it can still achieve success.
+
+**Why the overshoot penalty?** The distance penalty treats undershooting and overshooting symmetrically. But in practice, overshooting (landing beyond `target_x_max`) tends to produce higher `Umax` choices. The additional `overshoot_penalty_weight = 0.50` makes overshooting disproportionately costly, reinforcing the Umax penalty signal and pushing the policy to use the minimum strength needed.
+
+The center bonus is only paid for landings inside the fixed target interval `[0.42, 0.65]`.
 
 ### Seed splits
 

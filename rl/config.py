@@ -123,11 +123,13 @@ class RLConfig:
     # -----------------------------------------------------------------------
     # Reward shaping
     # -----------------------------------------------------------------------
-    success_bonus:       float = 1.0
-    no_landing_penalty:  float = -1.0
-    distance_scale:      float = 0.20  # m — divisor for shortfall→penalty
-    energy_penalty_w:    float = 0.02
-    center_bonus_weight: float = 0.2
+    success_bonus:          float = 1.0
+    no_landing_penalty:     float = -1.0
+    distance_scale:         float = 0.20   # m — divisor for shortfall→penalty
+    center_bonus_weight:    float = 0.2
+    umax_penalty_weight:    float = 0.10   # penalise high jet strength
+    duration_penalty_weight: float = 0.05  # penalise long burst
+    overshoot_penalty_weight: float = 0.50 # extra penalty for landing beyond target_x_max
 
     # -----------------------------------------------------------------------
     # Simulation settings

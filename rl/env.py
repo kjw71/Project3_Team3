@@ -361,7 +361,10 @@ class AirJetSortingEnv(gym.Env):
                 "reward_success": 0.0,
                 "reward_center": 0.0,
                 "reward_distance": 0.0,
+                "reward_overshoot": 0.0,
                 "reward_energy": 0.0,
+                "umax_norm": 0.0,
+                "duration_norm": 0.0,
             }
             return cfg.no_landing_penalty, info
 
@@ -389,12 +392,19 @@ class AirJetSortingEnv(gym.Env):
             distance = 0.0
         r_distance = -(distance / cfg.distance_scale)
 
-        # Energy penalty: discourage wasteful high-power long bursts
+        # Overshoot penalty: extra cost for landing beyond target_x_max
+        if lx > cfg.target_x_max:
+            overshoot_distance = lx - cfg.target_x_max
+            r_overshoot = -cfg.overshoot_penalty_weight * overshoot_distance / cfg.distance_scale
+        else:
+            r_overshoot = 0.0
+
+        # Energy penalty: separate Umax and duration terms
         umax_norm     = (umax - cfg.umax_min) / (cfg.umax_max - cfg.umax_min)
         duration_norm = (duration - cfg.duration_min) / (cfg.duration_max - cfg.duration_min)
-        r_energy = -cfg.energy_penalty_w * (umax_norm + duration_norm)
+        r_energy = -cfg.umax_penalty_weight * umax_norm - cfg.duration_penalty_weight * duration_norm
 
-        reward = r_success + r_center + r_distance + r_energy
+        reward = r_success + r_center + r_distance + r_overshoot + r_energy
 
         info = {
             "success": success,
@@ -405,7 +415,10 @@ class AirJetSortingEnv(gym.Env):
             "reward_success": r_success,
             "reward_center": r_center,
             "reward_distance": r_distance,
+            "reward_overshoot": r_overshoot,
             "reward_energy": r_energy,
+            "umax_norm": umax_norm,
+            "duration_norm": duration_norm,
         }
         return float(reward), info
 
